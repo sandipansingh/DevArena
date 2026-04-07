@@ -1,0 +1,21 @@
+{
+  "name": "devarena",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "build:all": "npm run build --prefix client && npm install --prefix server --omit=dev",
+    "test": "npm run test --prefix server && npm run test --prefix client",
+    "test:server": "npm run test --prefix server",
+    "test:client": "npm run test --prefix client",
+    "start": "npm run start --prefix server",
+    "prod:up": "docker compose -f docker-compose.prod.yml up --build -d",
+    "prod:down": "docker compose -f docker-compose.prod.yml down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

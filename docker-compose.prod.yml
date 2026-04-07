@@ -1,0 +1,25 @@
+services:
+  server:
+    build:
+      context: ./server
+    image: devarena-server:prod
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      CLIENT_ORIGIN: http://localhost:8080
+      JWT_SECRET: please-change-this-production-secret
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 120
+    ports:
+      - "4000:4000"
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_BASE_URL: http://localhost:4000
+    image: devarena-client:prod
+    depends_on:
+      - server
+    ports:
+      - "8080:80"
