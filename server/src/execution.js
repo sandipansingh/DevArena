@@ -9,7 +9,11 @@ const languageMap = {
   java: 62,
 };
 
-async function runWithJudge0({ sourceCode, language = "javascript", stdin = "" }) {
+async function runWithJudge0({
+  sourceCode,
+  language = "javascript",
+  stdin = "",
+}) {
   if (!JUDGE0_URL) {
     return null;
   }
@@ -71,6 +75,8 @@ async function executeSubmission({ code, language = "javascript", room }) {
         status: judgeResult.status?.description || "Unknown",
         stdout: judgeResult.stdout || "",
         stderr: judgeResult.stderr || judgeResult.compile_output || "",
+        runtime: judgeResult.time ?? null,
+        memory: judgeResult.memory ?? null,
       };
     }
   } catch (_error) {
@@ -84,6 +90,8 @@ async function executeSubmission({ code, language = "javascript", room }) {
     status: passed ? "Accepted" : "Wrong Answer",
     stdout: "",
     stderr: "",
+    runtime: null,
+    memory: null,
   };
 }
 

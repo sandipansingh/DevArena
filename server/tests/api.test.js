@@ -19,6 +19,11 @@ describe("DevArena API", () => {
     const res = await request(runtime.app).get("/health");
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+
+    const readyRes = await request(runtime.app).get("/health/ready");
+    expect(readyRes.status).toBe(200);
+    expect(readyRes.body.ok).toBe(true);
+    expect(readyRes.body.runtime).toBeTruthy();
   });
 
   test("register, login, and me flow", async () => {
@@ -44,6 +49,7 @@ describe("DevArena API", () => {
 
     expect(meRes.status).toBe(200);
     expect(meRes.body.username).toBe(username);
+    expect(Array.isArray(meRes.body.recentMatches)).toBe(true);
   });
 
   test("leaderboard and problems endpoints", async () => {

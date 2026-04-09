@@ -1,4 +1,5 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
 export type User = {
   id: string;
@@ -7,6 +8,19 @@ export type User = {
   wins: number;
   losses: number;
   matchesPlayed: number;
+  recentMatches?: MatchSummary[];
+};
+
+export type MatchSummary = {
+  roomId: string;
+  opponentId: string;
+  opponentUsername: string;
+  result: "win" | "loss";
+  reason: string;
+  ratingBefore: number;
+  ratingAfter: number;
+  ratingDelta: number;
+  endedAt: string;
 };
 
 export type AuthResponse = {
@@ -36,6 +50,8 @@ export type Problem = {
 export type BattlePlayer = {
   userId: string;
   username: string;
+  rating?: number;
+  connected?: boolean;
 };
 
 export type BattleReadyPayload = {
@@ -50,7 +66,7 @@ export type BattleReadyPayload = {
 export type BattleFinishedPayload = {
   roomId: string;
   reason: string;
-  winnerId: string;
+  winnerId: string | null;
   ai?: {
     summary: string;
     winnerReason: string;
@@ -96,21 +112,28 @@ async function request<T>(
   const data = await response.json();
 
   if (!response.ok) {
-    const message = typeof data?.message === "string" ? data.message : "Request failed";
+    const message =
+      typeof data?.message === "string" ? data.message : "Request failed";
     throw new Error(message);
   }
 
   return data as T;
 }
 
-export function login(username: string, password: string): Promise<AuthResponse> {
+export function login(
+  username: string,
+  password: string,
+): Promise<AuthResponse> {
   return request<AuthResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
 }
 
-export function register(username: string, password: string): Promise<AuthResponse> {
+export function register(
+  username: string,
+  password: string,
+): Promise<AuthResponse> {
   return request<AuthResponse>("/auth/register", {
     method: "POST",
     body: JSON.stringify({ username, password }),
