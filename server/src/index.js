@@ -13,7 +13,7 @@ const { z } = require("zod");
 const { v4: uuidv4 } = require("uuid");
 
 const { signToken, authMiddleware, verifySocketToken } = require("./auth");
-const { problems, randomProblem } = require("./problems");
+const { problems, randomProblem, SUPPORTED_LANGUAGES } = require("./problems");
 const { executeSubmission } = require("./execution");
 const {
   AI_ENABLED,
@@ -31,15 +31,24 @@ const {
   listLeaderboard,
   updateMatchOutcome,
   getUsersByIds,
+  addAiFeedbackForUser,
+  listAiFeedbackByUser,
+  listRecruiterCandidates,
+  ratingToTier,
   isDbReady,
   getRuntimeStats,
   waitingByDifficulty,
   activeRooms,
 } = require("./repository");
 
-const authSchema = z.object({
+const loginSchema = z.object({
   username: z.string().min(3).max(24),
   password: z.string().min(6).max(72),
+});
+
+const registerSchema = loginSchema.extend({
+  role: z.enum(["developer", "recruiter"]).default("developer"),
+  primaryLanguages: z.array(z.string().min(1).max(32)).max(8).optional(),
 });
 
 const queueJoinSchema = z.object({
@@ -63,13 +72,113 @@ const chatSchema = z.object({
 const submitSchema = z.object({
   roomId: z.string().min(1).max(128),
   code: z.string().max(50_000),
-  language: z.enum(["javascript", "python", "java"]).default("javascript"),
+  language: z.string().min(1).max(32).default("javascript"),
+});
+
+const aiFeedbackQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+const recruiterCandidateQuerySchema = z.object({
+  tier: z.enum(["Bronze", "Silver", "Gold", "Platinum"]).optional(),
+  language: z.string().min(1).max(32).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 
 const MATCHMAKING_BASE_TOLERANCE = 100;
 const MATCHMAKING_STEP_SECONDS = 10;
 const MATCHMAKING_STEP_TOLERANCE = 50;
 const MATCHMAKING_MAX_TOLERANCE = 450;
+
+function normalizeSubmissionLanguage(language) {
+  return String(language || "")
+    .trim()
+    .toLowerCase();
+}
+
+function isLanguageAllowed(language) {
+  return SUPPORTED_LANGUAGES.includes(normalizeSubmissionLanguage(language));
+}
+
+function isRoomFinalized(room) {
+  return Boolean(room?.finalizationState?.completed);
+}
+
+function isRoomActive(room) {
+  return Boolean(room) && !isRoomFinalized(room);
+}
+
+function countsAsSubmission(verdict) {
+  return [
+    "accepted",
+    "wrong-answer",
+    "compile-error",
+    "runtime-error",
+  ].includes(String(verdict || ""));
+}
+
+function getAcceptedSubmissions(room) {
+  return Object.entries(room.submissions)
+    .filter(([, data]) => (data?.verdict || "") === "accepted")
+    .sort((a, b) => (a[1]?.submittedAt || 0) - (b[1]?.submittedAt || 0));
+}
+
+function evaluateRoomOutcomeDecision(room, now, fairnessPolicy) {
+  const accepted = getAcceptedSubmissions(room);
+  const earliestAccepted = accepted[0] || null;
+  const allPlayersSubmitted = room.players.every((player) =>
+    Boolean(room.submissions[player.userId]),
+  );
+  const timerExpired = now >= room.endsAt;
+
+  if (fairnessPolicy === "early-finish" && earliestAccepted) {
+    return {
+      shouldFinalize: true,
+      winnerId: earliestAccepted[0],
+      reason: "early-accepted",
+    };
+  }
+
+  if (allPlayersSubmitted && !earliestAccepted) {
+    return {
+      shouldFinalize: true,
+      winnerId: null,
+      reason: "all-submitted-no-solution",
+    };
+  }
+
+  if (timerExpired) {
+    if (earliestAccepted) {
+      return {
+        shouldFinalize: true,
+        winnerId: earliestAccepted[0],
+        reason: "timer-expired",
+      };
+    }
+
+    return {
+      shouldFinalize: true,
+      winnerId: null,
+      reason: "timer-expired",
+    };
+  }
+
+  return {
+    shouldFinalize: false,
+    winnerId: null,
+    reason: "room-active",
+  };
+}
+
+function logStructured(event, details = {}) {
+  console.log(
+    JSON.stringify({
+      event,
+      timestamp: new Date().toISOString(),
+      ...details,
+    }),
+  );
+}
 
 function buildSocketErrorPayload(code, message, retryable = false, details) {
   return {
@@ -228,8 +337,11 @@ function buildBattleState(room) {
       ([userId, submission]) => ({
         userId,
         passed: Boolean(submission.passed),
+        verdict: submission.verdict,
+        language: submission.language,
         engine: submission.engine,
         status: submission.status,
+        stdout: submission.stdout,
         stderr: submission.stderr,
         runtime: submission.runtime,
         memory: submission.memory,
@@ -241,7 +353,7 @@ function buildBattleState(room) {
 
 function findActiveRoomForUser(userId) {
   for (const room of activeRooms.values()) {
-    if (room.winnerId) {
+    if (isRoomFinalized(room)) {
       continue;
     }
 
@@ -273,7 +385,7 @@ function scheduleDisconnectForfeit(
 
   room.disconnectTimers[disconnectedUserId] = setTimeout(async () => {
     const liveRoom = activeRooms.get(room.roomId);
-    if (!liveRoom || liveRoom.winnerId) {
+    if (!isRoomActive(liveRoom)) {
       return;
     }
 
@@ -288,12 +400,7 @@ function scheduleDisconnectForfeit(
       (player) => player.userId !== disconnectedUserId,
     );
     if (opponent) {
-      await finalizeRoom(
-        io,
-        liveRoom,
-        opponent.userId,
-        "opponent-disconnected-timeout",
-      );
+      await finalizeRoom(io, liveRoom, opponent.userId, "disconnect-timeout");
     }
   }, disconnectGraceMs);
 }
@@ -340,6 +447,15 @@ async function createRoom(playerA, playerB, difficulty, battleDurationSeconds) {
       generatedProblem: Boolean(aiProblem),
     },
     disconnectTimers: {},
+    finalizationState: {
+      completed: false,
+      inProgress: false,
+      promise: null,
+      reason: null,
+    },
+    finalizedAt: null,
+    stuckMarked: false,
+    metricsRecorded: false,
     rateLimitState: {
       chat: new Map(),
       submit: new Map(),
@@ -377,73 +493,212 @@ function emitRoomReady(io, room) {
 }
 
 async function finalizeRoom(io, room, winnerId, reason, aiInsight = null) {
-  if (room.winnerId) {
-    return;
+  room.finalizationState = room.finalizationState || {
+    completed: false,
+    inProgress: false,
+    promise: null,
+    reason: null,
+  };
+
+  if (room.finalizationState.completed) {
+    return room.finalizationState.promise;
   }
 
-  room.winnerId = winnerId;
+  if (room.finalizationState.inProgress && room.finalizationState.promise) {
+    return room.finalizationState.promise;
+  }
 
-  if (room.disconnectTimers) {
-    for (const timerId of Object.values(room.disconnectTimers)) {
-      clearTimeout(timerId);
+  room.finalizationState.inProgress = true;
+  room.finalizationState.reason = reason;
+
+  room.finalizationState.promise = (async () => {
+    room.winnerId = winnerId ?? null;
+    room.finalizedAt = Date.now();
+
+    if (room.disconnectTimers) {
+      for (const timerId of Object.values(room.disconnectTimers)) {
+        clearTimeout(timerId);
+      }
+      room.disconnectTimers = {};
     }
-    room.disconnectTimers = {};
-  }
 
-  const playerIds = room.players.map((p) => p.userId);
-  const [winner, loser] = winnerId
-    ? await Promise.all([
-        getUserById(winnerId),
-        getUsersByIds(playerIds).then(
-          (list) => list.find((u) => u.id !== winnerId) || null,
-        ),
-      ])
-    : [null, null];
+    const playerIds = room.players.map((p) => p.userId);
+    const [winner, loser] = winnerId
+      ? await Promise.all([
+          getUserById(winnerId),
+          getUsersByIds(playerIds).then(
+            (list) => list.find((u) => u.id !== winnerId) || null,
+          ),
+        ])
+      : [null, null];
 
-  if (winner && loser && winnerId) {
-    const ratings = adjustRating(winner, loser);
-    const winnerPlayer = room.players.find(
-      (player) => player.userId === winnerId,
-    );
-    const loserPlayer = room.players.find(
-      (player) => player.userId !== winnerId,
-    );
+    if (winner && loser && winnerId) {
+      const ratings = adjustRating(winner, loser);
+      const winnerPlayer = room.players.find(
+        (player) => player.userId === winnerId,
+      );
+      const loserPlayer = room.players.find(
+        (player) => player.userId !== winnerId,
+      );
 
-    await updateMatchOutcome(winner.id, loser.id, ratings, {
+      await updateMatchOutcome(winner.id, loser.id, ratings, {
+        roomId: room.roomId,
+        reason,
+        endedAt: new Date().toISOString(),
+        winnerUsername: winnerPlayer?.username || winner.username,
+        loserUsername: loserPlayer?.username || loser.username,
+      });
+    }
+
+    if (aiInsight) {
+      const perPlayer = Array.isArray(aiInsight.perPlayer)
+        ? aiInsight.perPlayer
+        : [];
+      const qualityScores =
+        aiInsight.qualityScores && typeof aiInsight.qualityScores === "object"
+          ? aiInsight.qualityScores
+          : {};
+
+      await Promise.all(
+        room.players.map(async (player) => {
+          const playerFeedback =
+            perPlayer.find((entry) => entry.userId === player.userId) || null;
+          await addAiFeedbackForUser(player.userId, {
+            roomId: room.roomId,
+            summary: aiInsight.summary,
+            winnerReason: aiInsight.winnerReason,
+            strengths: playerFeedback?.strengths || "",
+            weaknesses: playerFeedback?.weaknesses || "",
+            suggestions: playerFeedback?.suggestions || "",
+            qualityScore:
+              typeof qualityScores[player.userId] === "number"
+                ? qualityScores[player.userId]
+                : null,
+          });
+        }),
+      );
+    }
+
+    const latestPlayers = await getUsersByIds(playerIds);
+
+    io.to(room.roomId).emit("battle:finished", {
       roomId: room.roomId,
       reason,
-      endedAt: new Date().toISOString(),
-      winnerUsername: winnerPlayer?.username || winner.username,
-      loserUsername: loserPlayer?.username || loser.username,
+      winnerId: winnerId ?? null,
+      ai: aiInsight,
+      players: sanitizePlayers(room).map((p) => {
+        const user = latestPlayers.find((u) => u.id === p.userId);
+        return {
+          userId: p.userId,
+          username: p.username,
+          rating: user ? user.rating : 1200,
+        };
+      }),
     });
-  }
 
-  const latestPlayers = await getUsersByIds(playerIds);
+    logStructured("battle.finalized", {
+      roomId: room.roomId,
+      winnerId: winnerId ?? null,
+      reason,
+      submissions: Object.keys(room.submissions).length,
+    });
 
-  io.to(room.roomId).emit("battle:finished", {
-    roomId: room.roomId,
-    reason,
-    winnerId,
-    ai: aiInsight,
-    players: sanitizePlayers(room).map((p) => {
-      const user = latestPlayers.find((u) => u.id === p.userId);
-      return {
-        userId: p.userId,
-        username: p.username,
-        rating: user ? user.rating : 1200,
-      };
-    }),
+    room.finalizationState.completed = true;
+    room.finalizationState.inProgress = false;
+
+    setTimeout(() => {
+      activeRooms.delete(room.roomId);
+    }, 30_000);
+  })().catch((error) => {
+    room.finalizationState.inProgress = false;
+    logStructured("battle.finalize_error", {
+      roomId: room.roomId,
+      reason,
+      error: error?.message || "Unknown finalize error",
+    });
+    throw error;
   });
 
-  setTimeout(() => {
-    activeRooms.delete(room.roomId);
-  }, 30_000);
+  return room.finalizationState.promise;
 }
 
-function buildExpressApp(corsOrigins) {
+async function buildAiInsightForRoom(room, winnerId) {
+  if (!winnerId) {
+    return null;
+  }
+
+  try {
+    return await judgeBattleAndCoach({
+      problem: room.problem,
+      players: room.players.map((player) => ({
+        userId: player.userId,
+        username: player.username,
+        rating: player.rating,
+      })),
+      submissions: room.players.map((player) => ({
+        userId: player.userId,
+        ...(room.submissions[player.userId] || {
+          status: "No submission",
+          verdict: "not-submitted",
+          code: "",
+          language: "javascript",
+          passed: false,
+        }),
+      })),
+      winnerId,
+    });
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function evaluateAndFinalizeRoom(
+  io,
+  room,
+  fairnessPolicy,
+  trigger = "timer",
+) {
+  if (!isRoomActive(room)) {
+    return false;
+  }
+
+  const decision = evaluateRoomOutcomeDecision(
+    room,
+    Date.now(),
+    fairnessPolicy,
+  );
+  if (!decision.shouldFinalize) {
+    if (trigger === "submission") {
+      io.to(room.roomId).emit("battle:room-active", {
+        roomId: room.roomId,
+        endsAt: room.endsAt,
+        reason: decision.reason,
+      });
+    }
+    return false;
+  }
+
+  const aiInsight = await buildAiInsightForRoom(room, decision.winnerId);
+  await finalizeRoom(io, room, decision.winnerId, decision.reason, aiInsight);
+  return true;
+}
+
+function buildExpressApp(corsOrigins, getOperationalSnapshot = () => null) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+
+  function requireRole(...allowedRoles) {
+    return (req, res, next) => {
+      const role = req.user?.role || "developer";
+      if (allowedRoles.includes(role)) {
+        return next();
+      }
+
+      return res.status(403).json({ message: "Forbidden" });
+    };
+  }
+
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: config.NODE_ENV === "test" ? 1_000 : 30,
@@ -486,6 +741,7 @@ function buildExpressApp(corsOrigins) {
 
   app.get("/health/ready", (_req, res) => {
     const runtimeStats = getRuntimeStats();
+    const operational = getOperationalSnapshot();
     const dbReady = isDbReady();
     const ready = dbReady;
 
@@ -494,27 +750,35 @@ function buildExpressApp(corsOrigins) {
       checks: {
         db: dbReady ? "up" : "down",
       },
-      runtime: runtimeStats,
+      runtime: {
+        ...runtimeStats,
+        operational,
+      },
       timestamp: Date.now(),
     });
   });
 
   app.post("/auth/register", authLimiter, async (req, res) => {
-    const parsed = authSchema.safeParse(req.body);
+    const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
         .status(400)
         .json({ message: "Invalid payload", errors: parsed.error.issues });
     }
 
-    const { username, password } = parsed.data;
+    const { username, password, role, primaryLanguages } = parsed.data;
     const existing = await findUserByUsername(username);
     if (existing) {
       return res.status(409).json({ message: "Username already exists" });
     }
 
     const passwordHash = bcrypt.hashSync(password, 10);
-    const user = await addUser({ username, passwordHash });
+    const user = await addUser({
+      username,
+      passwordHash,
+      role,
+      primaryLanguages,
+    });
     const token = signToken(user);
 
     return res.status(201).json({
@@ -522,6 +786,9 @@ function buildExpressApp(corsOrigins) {
       user: {
         id: user.id,
         username: user.username,
+        role: user.role,
+        primaryLanguages: user.primaryLanguages,
+        tier: ratingToTier(user.rating),
         rating: user.rating,
         wins: user.wins,
         losses: user.losses,
@@ -531,7 +798,7 @@ function buildExpressApp(corsOrigins) {
   });
 
   app.post("/auth/login", authLimiter, async (req, res) => {
-    const parsed = authSchema.safeParse(req.body);
+    const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
         .status(400)
@@ -550,6 +817,9 @@ function buildExpressApp(corsOrigins) {
       user: {
         id: user.id,
         username: user.username,
+        role: user.role,
+        primaryLanguages: user.primaryLanguages,
+        tier: ratingToTier(user.rating),
         rating: user.rating,
         wins: user.wins,
         losses: user.losses,
@@ -567,6 +837,9 @@ function buildExpressApp(corsOrigins) {
     return res.json({
       id: user.id,
       username: user.username,
+      role: user.role,
+      primaryLanguages: user.primaryLanguages,
+      tier: ratingToTier(user.rating),
       rating: user.rating,
       wins: user.wins,
       losses: user.losses,
@@ -589,6 +862,40 @@ function buildExpressApp(corsOrigins) {
         : [],
     });
   });
+
+  app.get("/users/me/ai-feedback", authMiddleware, async (req, res) => {
+    const parsed = aiFeedbackQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Invalid query", errors: parsed.error.issues });
+    }
+
+    const rows = await listAiFeedbackByUser(req.user.sub, parsed.data.limit);
+    return res.json(rows);
+  });
+
+  app.get(
+    "/recruiter/candidates",
+    authMiddleware,
+    requireRole("recruiter", "admin"),
+    async (req, res) => {
+      const parsed = recruiterCandidateQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ message: "Invalid query", errors: parsed.error.issues });
+      }
+
+      const data = await listRecruiterCandidates({
+        tier: parsed.data.tier,
+        language: parsed.data.language,
+        limit: parsed.data.limit,
+      });
+
+      return res.json(data);
+    },
+  );
 
   app.get("/leaderboard", async (_req, res) => {
     const leaderboard = await listLeaderboard(20);
@@ -649,14 +956,32 @@ function buildExpressApp(corsOrigins) {
 function createRuntime({
   port = config.PORT,
   battleDurationSeconds = 300,
+  fairnessPolicy = config.FAIRNESS_POLICY,
   disconnectGraceMs = config.DISCONNECT_GRACE_MS,
   chatRateLimitWindowMs = config.CHAT_RATE_LIMIT_WINDOW_MS,
   chatRateLimitMax = config.CHAT_RATE_LIMIT_MAX,
   submitRateLimitWindowMs = config.SUBMIT_RATE_LIMIT_WINDOW_MS,
   submitRateLimitMax = config.SUBMIT_RATE_LIMIT_MAX,
 } = {}) {
+  const normalizedFairnessPolicy =
+    fairnessPolicy === "early-finish" ? "early-finish" : "timer-only";
+
   const corsOrigins = getCorsOrigins();
-  const app = buildExpressApp(corsOrigins);
+  const operationalCounters = {
+    finalizedRooms: 0,
+    totalCompletionMs: 0,
+    averageCompletionMs: 0,
+    stuckRooms: 0,
+    finalizeReasons: {},
+  };
+
+  const app = buildExpressApp(corsOrigins, () => ({
+    fairnessPolicy: normalizedFairnessPolicy,
+    finalizedRooms: operationalCounters.finalizedRooms,
+    averageCompletionMs: operationalCounters.averageCompletionMs,
+    stuckRooms: operationalCounters.stuckRooms,
+    finalizeReasons: operationalCounters.finalizeReasons,
+  }));
   const server = http.createServer(app);
   const io = new Server(server, {
     cors: {
@@ -676,6 +1001,7 @@ function createRuntime({
       socket.data.user = {
         userId: payload.sub,
         username: payload.username,
+        role: payload.role || "developer",
       };
       return next();
     } catch (_error) {
@@ -839,7 +1165,7 @@ function createRuntime({
 
       const { roomId, chars } = parsed.data;
       const room = activeRooms.get(roomId);
-      if (!room || room.winnerId) {
+      if (!isRoomActive(room)) {
         return;
       }
 
@@ -871,7 +1197,7 @@ function createRuntime({
 
       const { roomId, message } = parsed.data;
       const room = activeRooms.get(roomId);
-      if (!room || room.winnerId) {
+      if (!isRoomActive(room)) {
         emitSocketError(
           socket,
           "battle:error",
@@ -948,7 +1274,7 @@ function createRuntime({
 
       const { roomId, code, language } = parsed.data;
       const room = activeRooms.get(roomId);
-      if (!room || room.winnerId) {
+      if (!isRoomActive(room)) {
         emitSocketError(
           socket,
           "battle:error",
@@ -991,56 +1317,132 @@ function createRuntime({
         return;
       }
 
+      const normalizedLanguage = normalizeSubmissionLanguage(language);
+      if (!isLanguageAllowed(normalizedLanguage)) {
+        emitSocketError(
+          socket,
+          "battle:error",
+          "INVALID_LANGUAGE",
+          `Unsupported language '${language}'. Allowed values: ${SUPPORTED_LANGUAGES.join(
+            ", ",
+          )}`,
+          false,
+        );
+        socket.emit("battle:submission-result", {
+          userId: socket.data.user.userId,
+          passed: false,
+          verdict: "invalid-language",
+          language: normalizedLanguage,
+          engine: "precheck",
+          status: "Invalid Language",
+          stdout: "",
+          stderr: `Unsupported language '${language}'`,
+          runtime: null,
+          memory: null,
+          submittedAt: Date.now(),
+        });
+        socket.emit("battle:submission-processed", {
+          userId: socket.data.user.userId,
+          passed: false,
+          verdict: "invalid-language",
+          language: normalizedLanguage,
+          engine: "precheck",
+          status: "Invalid Language",
+          stdout: "",
+          stderr: `Unsupported language '${language}'`,
+          runtime: null,
+          memory: null,
+          submittedAt: Date.now(),
+        });
+        io.to(roomId).emit("battle:room-active", {
+          roomId,
+          endsAt: room.endsAt,
+          reason: "room-active",
+        });
+        return;
+      }
+
       let execution;
       try {
         execution = await executeSubmission({
           code: String(code || ""),
-          language,
+          language: normalizedLanguage,
           room,
         });
       } catch (_error) {
         execution = {
           passed: false,
+          verdict: "execution-error",
+          language: normalizedLanguage,
           engine: "internal-error",
           status: "Execution Error",
+          stdout: "",
           stderr: "Execution failed",
           runtime: null,
           memory: null,
         };
       }
 
-      const passed = execution.passed;
-      room.submissions[socket.data.user.userId] = {
-        passed,
-        submittedAt: Date.now(),
-        chars: code.length,
+      const submittedAt = Date.now();
+      const submissionPayload = {
+        userId: socket.data.user.userId,
+        passed: Boolean(execution.passed),
+        verdict: execution.verdict,
+        language: execution.language || normalizedLanguage,
         engine: execution.engine,
         status: execution.status,
+        stdout: execution.stdout,
         stderr: execution.stderr,
         runtime: execution.runtime,
         memory: execution.memory,
-        code,
-        language,
+        submittedAt,
       };
 
-      io.to(roomId).emit("battle:submission-result", {
+      logStructured("battle.submit_processed", {
+        roomId,
         userId: socket.data.user.userId,
-        passed,
-        engine: execution.engine,
-        status: execution.status,
-        stderr: execution.stderr,
-        runtime: execution.runtime,
-        memory: execution.memory,
+        verdict: submissionPayload.verdict,
+        status: submissionPayload.status,
+        language: submissionPayload.language,
       });
 
-      // Winner is finalized at timer end for fair head-to-head evaluation of both contestants.
+      if (countsAsSubmission(submissionPayload.verdict)) {
+        room.submissions[socket.data.user.userId] = {
+          ...submissionPayload,
+          chars: code.length,
+          code,
+        };
+      }
+
+      io.to(roomId).emit("battle:submission-result", submissionPayload);
+      io.to(roomId).emit("battle:submission-processed", submissionPayload);
+
+      if (
+        submissionPayload.verdict === "invalid-language" ||
+        submissionPayload.verdict === "unsupported-language"
+      ) {
+        emitSocketError(
+          socket,
+          "battle:error",
+          "INVALID_LANGUAGE",
+          submissionPayload.stderr || "Language validation failed",
+          false,
+        );
+      }
+
+      await evaluateAndFinalizeRoom(
+        io,
+        room,
+        normalizedFairnessPolicy,
+        "submission",
+      );
     });
 
     socket.on("disconnect", async () => {
       clearQueueForUser(socket.data.user.userId);
 
       for (const room of activeRooms.values()) {
-        if (room.winnerId) {
+        if (!isRoomActive(room)) {
           continue;
         }
 
@@ -1073,46 +1475,45 @@ function createRuntime({
   const interval = setInterval(async () => {
     const now = Date.now();
     for (const room of activeRooms.values()) {
-      if (!room.winnerId && now >= room.endsAt) {
-        const playerIds = room.players.map((p) => p.userId);
-        const submissions = Object.entries(room.submissions)
-          .filter(([, data]) => data.passed)
-          .sort((a, b) => a[1].submittedAt - b[1].submittedAt);
-
-        let winnerId;
-        let endReason;
-
-        if (submissions.length > 0) {
-          winnerId = submissions[0][0];
-          endReason = "timer-expired";
-        } else {
-          // Deterministic fairness policy: if nobody solved it, the match is a draw.
-          winnerId = null;
-          endReason = "timer-expired-no-solution-draw";
+      if (room.finalizationState?.completed) {
+        if (!room.metricsRecorded && room.finalizedAt) {
+          const completionMs = Math.max(0, room.finalizedAt - room.startedAt);
+          operationalCounters.finalizedRooms += 1;
+          operationalCounters.totalCompletionMs += completionMs;
+          operationalCounters.averageCompletionMs =
+            operationalCounters.totalCompletionMs /
+            operationalCounters.finalizedRooms;
+          const finalizeReason = room.finalizationState?.reason || "unknown";
+          operationalCounters.finalizeReasons[finalizeReason] =
+            (operationalCounters.finalizeReasons[finalizeReason] || 0) + 1;
+          room.metricsRecorded = true;
         }
+        continue;
+      }
 
-        const aiInsight = winnerId
-          ? await judgeBattleAndCoach({
-              problem: room.problem,
-              players: room.players.map((p) => ({
-                userId: p.userId,
-                username: p.username,
-                rating: p.rating,
-              })),
-              submissions: playerIds.map((id) => ({
-                userId: id,
-                ...(room.submissions[id] || {
-                  status: "No submission",
-                  code: "",
-                  language: "javascript",
-                  passed: false,
-                }),
-              })),
-              winnerId,
-            })
-          : null;
+      if (!isRoomActive(room)) {
+        continue;
+      }
 
-        await finalizeRoom(io, room, winnerId, endReason, aiInsight);
+      if (!room.stuckMarked && now > room.endsAt + 5_000) {
+        room.stuckMarked = true;
+        operationalCounters.stuckRooms += 1;
+        logStructured("battle.stuck_room", {
+          roomId: room.roomId,
+          startedAt: room.startedAt,
+          endsAt: room.endsAt,
+          submissions: Object.keys(room.submissions).length,
+        });
+      }
+
+      const finalized = await evaluateAndFinalizeRoom(
+        io,
+        room,
+        normalizedFairnessPolicy,
+        "timer",
+      );
+      if (finalized) {
+        room.metricsRecorded = false;
       }
     }
   }, 1000);

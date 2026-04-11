@@ -124,6 +124,12 @@ function closeSockets(...sockets) {
   }
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 describe("socket integration", () => {
   let runtime;
   let baseUrl;
@@ -258,7 +264,7 @@ describe("socket integration", () => {
       "battle:finished",
       5_000,
     );
-    expect(finished.reason).toBe("opponent-disconnected-timeout");
+    expect(finished.reason).toBe("disconnect-timeout");
     expect(finished.winnerId).toBe(match.playerA.user.id);
 
     closeSockets(match.socketA);
@@ -285,7 +291,7 @@ describe("socket integration", () => {
       "battle:finished",
       5_000,
     );
-    expect(finished.reason).toBe("timer-expired-no-solution-draw");
+    expect(finished.reason).toBe("timer-expired");
     expect(finished.winnerId).toBeNull();
 
     const meA = await request(runtime.app)
@@ -297,6 +303,254 @@ describe("socket integration", () => {
 
     expect(meA.body.rating).toBe(1200);
     expect(meB.body.rating).toBe(1200);
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("language mismatch emits explicit non-accepted verdict", async () => {
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_lang_mismatch`,
+    });
+
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: "def solve(input):\n  return input",
+    });
+
+    const result = await waitForEventMatch(
+      match.socketA,
+      "battle:submission-result",
+      (payload) => payload?.userId === match.playerA.user.id,
+    );
+
+    expect(result.passed).toBe(false);
+    expect([
+      "compile-error",
+      "invalid-language",
+      "wrong-answer",
+      "runtime-error",
+    ]).toContain(result.verdict);
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("output mismatch returns wrong-answer and matching output returns accepted", async () => {
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_execution_verdicts`,
+    });
+
+    const wrongCode =
+      "function solve(input){ return 'definitely-wrong-output'; }";
+    const acceptedCode = `function solve(input){ return ${JSON.stringify(match.readyA.problem.sampleOutput)}; }`;
+
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: wrongCode,
+    });
+
+    const wrongResult = await waitForEventMatch(
+      match.socketA,
+      "battle:submission-result",
+      (payload) =>
+        payload?.userId === match.playerA.user.id &&
+        payload?.verdict === "wrong-answer",
+    );
+    expect(wrongResult.passed).toBe(false);
+
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: acceptedCode,
+    });
+
+    const acceptedResult = await waitForEventMatch(
+      match.socketA,
+      "battle:submission-result",
+      (payload) =>
+        payload?.userId === match.playerA.user.id &&
+        payload?.verdict === "accepted",
+    );
+    expect(acceptedResult.passed).toBe(true);
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("all submitted without accepted result finalizes deterministically", async () => {
+    await runtime.stop();
+    runtime = createRuntime({
+      port: 0,
+      fairnessPolicy: "timer-only",
+      battleDurationSeconds: 5,
+      disconnectGraceMs: 2_000,
+    });
+    await runtime.start();
+    baseUrl = `http://127.0.0.1:${runtime.server.address().port}`;
+
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_all_submitted_no_solution`,
+    });
+
+    const wrongCode = "function solve(input){ return 'nope'; }";
+
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: wrongCode,
+    });
+
+    match.socketB.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: wrongCode,
+    });
+
+    const finished = await waitForEvent(
+      match.socketA,
+      "battle:finished",
+      5_000,
+    );
+    expect(finished.reason).toBe("all-submitted-no-solution");
+    expect(finished.winnerId).toBeNull();
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("early-finish policy finalizes immediately on first accepted", async () => {
+    await runtime.stop();
+    runtime = createRuntime({
+      port: 0,
+      fairnessPolicy: "early-finish",
+      battleDurationSeconds: 5,
+      disconnectGraceMs: 2_000,
+    });
+    await runtime.start();
+    baseUrl = `http://127.0.0.1:${runtime.server.address().port}`;
+
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_early_finish`,
+    });
+
+    const acceptedCode = `function solve(input){ return ${JSON.stringify(match.readyA.problem.sampleOutput)}; }`;
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: acceptedCode,
+    });
+
+    const finished = await waitForEvent(
+      match.socketA,
+      "battle:finished",
+      4_000,
+    );
+    expect(finished.reason).toBe("early-accepted");
+    expect(finished.winnerId).toBe(match.playerA.user.id);
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("timer-only policy preserves timer-based accepted winner resolution", async () => {
+    await runtime.stop();
+    runtime = createRuntime({
+      port: 0,
+      fairnessPolicy: "timer-only",
+      battleDurationSeconds: 2,
+      disconnectGraceMs: 2_000,
+    });
+    await runtime.start();
+    baseUrl = `http://127.0.0.1:${runtime.server.address().port}`;
+
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_timer_only_policy`,
+    });
+
+    const acceptedCode = `function solve(input){ return ${JSON.stringify(match.readyA.problem.sampleOutput)}; }`;
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: acceptedCode,
+    });
+
+    let finishedEarly = false;
+    const earlyListener = () => {
+      finishedEarly = true;
+    };
+    match.socketA.once("battle:finished", earlyListener);
+    await waitMs(700);
+    expect(finishedEarly).toBe(false);
+
+    const finished = await waitForEvent(
+      match.socketA,
+      "battle:finished",
+      5_000,
+    );
+    expect(finished.reason).toBe("timer-expired");
+    expect(finished.winnerId).toBe(match.playerA.user.id);
+
+    closeSockets(match.socketA, match.socketB);
+  });
+
+  test("finalize emits once and ratings update once", async () => {
+    await runtime.stop();
+    runtime = createRuntime({
+      port: 0,
+      fairnessPolicy: "early-finish",
+      battleDurationSeconds: 2,
+      disconnectGraceMs: 2_000,
+    });
+    await runtime.start();
+    baseUrl = `http://127.0.0.1:${runtime.server.address().port}`;
+
+    const match = await createMatchedPair({
+      runtime,
+      baseUrl,
+      suffix: `${Date.now()}_finalize_once`,
+    });
+
+    const acceptedCode = `function solve(input){ return ${JSON.stringify(match.readyA.problem.sampleOutput)}; }`;
+    let finishedEvents = 0;
+    match.socketA.on("battle:finished", () => {
+      finishedEvents += 1;
+    });
+
+    match.socketA.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: acceptedCode,
+    });
+    match.socketB.emit("battle:submit", {
+      roomId: match.roomId,
+      language: "javascript",
+      code: acceptedCode,
+    });
+
+    await waitForEvent(match.socketA, "battle:finished", 5_000);
+    await waitMs(1_200);
+
+    expect(finishedEvents).toBe(1);
+
+    const meA = await request(runtime.app)
+      .get("/users/me")
+      .set("Authorization", `Bearer ${match.playerA.token}`);
+    const meB = await request(runtime.app)
+      .get("/users/me")
+      .set("Authorization", `Bearer ${match.playerB.token}`);
+
+    expect(Array.isArray(meA.body.recentMatches)).toBe(true);
+    expect(Array.isArray(meB.body.recentMatches)).toBe(true);
+    expect(meA.body.recentMatches.length).toBe(1);
+    expect(meB.body.recentMatches.length).toBe(1);
 
     closeSockets(match.socketA, match.socketB);
   });
@@ -400,8 +654,7 @@ describe("socket integration", () => {
       suffix: `${Date.now()}_ratings`,
     });
 
-    const winningCode =
-      "function solve(input){ const stack=[]; for (let i=0;i<3;i++){ stack.push(i);} return stack; }";
+    const winningCode = `function solve(input){ return ${JSON.stringify(match.readyA.problem.sampleOutput)}; }`;
 
     match.socketA.emit("battle:submit", {
       roomId: match.roomId,

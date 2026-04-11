@@ -10,6 +10,20 @@ const waitingByDifficulty = {
   hard: [],
 };
 
+function ratingToTier(rating) {
+  const value = Number(rating || 1200);
+  if (value >= 1800) {
+    return "Platinum";
+  }
+  if (value >= 1500) {
+    return "Gold";
+  }
+  if (value >= 1300) {
+    return "Silver";
+  }
+  return "Bronze";
+}
+
 const hasMongo = Boolean(process.env.MONGODB_URI);
 
 let UserModel;
@@ -19,10 +33,36 @@ const userSchema = new mongoose.Schema(
     id: { type: String, required: true, unique: true },
     username: { type: String, required: true, unique: true, index: true },
     passwordHash: { type: String, required: true },
+    role: {
+      type: String,
+      enum: ["developer", "recruiter", "admin"],
+      default: "developer",
+      index: true,
+    },
+    primaryLanguages: {
+      type: [String],
+      default: [],
+    },
     rating: { type: Number, default: 1200 },
     wins: { type: Number, default: 0 },
     losses: { type: Number, default: 0 },
     matchesPlayed: { type: Number, default: 0 },
+    aiFeedback: {
+      type: [
+        {
+          id: { type: String, required: true },
+          roomId: { type: String, required: true },
+          summary: { type: String, required: true },
+          winnerReason: { type: String, required: true },
+          strengths: { type: String, default: "" },
+          weaknesses: { type: String, default: "" },
+          suggestions: { type: String, default: "" },
+          qualityScore: { type: Number, default: null },
+          generatedAt: { type: Date, required: true },
+        },
+      ],
+      default: [],
+    },
     recentMatches: {
       type: [
         {
@@ -75,10 +115,15 @@ function normalizeUser(user) {
     id: plain.id,
     username: plain.username,
     passwordHash: plain.passwordHash,
+    role: plain.role || "developer",
+    primaryLanguages: Array.isArray(plain.primaryLanguages)
+      ? plain.primaryLanguages
+      : [],
     rating: plain.rating,
     wins: plain.wins,
     losses: plain.losses,
     matchesPlayed: plain.matchesPlayed,
+    aiFeedback: Array.isArray(plain.aiFeedback) ? plain.aiFeedback : [],
     recentMatches: Array.isArray(plain.recentMatches)
       ? plain.recentMatches
       : [],
@@ -93,7 +138,12 @@ async function seedUsers() {
   }
 
   const passwordHash = bcrypt.hashSync("password123", 10);
-  await addUser({ username: "demo", passwordHash });
+  await addUser({
+    username: "demo",
+    passwordHash,
+    role: "developer",
+    primaryLanguages: ["javascript"],
+  });
 }
 
 async function findUserByUsername(username) {
@@ -119,15 +169,31 @@ async function getUserById(id) {
   return users.find((u) => u.id === id) || null;
 }
 
-async function addUser({ username, passwordHash }) {
+async function addUser({ username, passwordHash, role, primaryLanguages }) {
+  const normalizedRole =
+    role === "recruiter" || role === "admin" ? role : "developer";
+  const normalizedLanguages = Array.isArray(primaryLanguages)
+    ? primaryLanguages
+        .map((language) =>
+          String(language || "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+
   const user = {
     id: uuidv4(),
     username,
     passwordHash,
+    role: normalizedRole,
+    primaryLanguages: normalizedLanguages,
     rating: 1200,
     wins: 0,
     losses: 0,
     matchesPlayed: 0,
+    aiFeedback: [],
     recentMatches: [],
     createdAt: new Date().toISOString(),
   };
@@ -279,6 +345,142 @@ async function getUsersByIds(ids) {
   return users.filter((u) => ids.includes(u.id));
 }
 
+async function addAiFeedbackForUser(userId, feedback) {
+  const entry = {
+    id: uuidv4(),
+    roomId: String(feedback.roomId || ""),
+    summary: String(feedback.summary || "No summary available"),
+    winnerReason: String(
+      feedback.winnerReason || "Winner chosen by execution result",
+    ),
+    strengths: String(feedback.strengths || ""),
+    weaknesses: String(feedback.weaknesses || ""),
+    suggestions: String(feedback.suggestions || ""),
+    qualityScore:
+      typeof feedback.qualityScore === "number" ? feedback.qualityScore : null,
+    generatedAt: new Date(),
+  };
+
+  if (hasMongo) {
+    await UserModel.updateOne(
+      { id: userId },
+      {
+        $push: {
+          aiFeedback: {
+            $each: [entry],
+            $position: 0,
+            $slice: 50,
+          },
+        },
+      },
+    );
+    return;
+  }
+
+  const user = users.find((candidate) => candidate.id === userId);
+  if (!user) {
+    return;
+  }
+
+  user.aiFeedback = Array.isArray(user.aiFeedback) ? user.aiFeedback : [];
+  user.aiFeedback.unshift(entry);
+  user.aiFeedback = user.aiFeedback.slice(0, 50);
+}
+
+async function listAiFeedbackByUser(userId, limit = 20) {
+  const user = await getUserById(userId);
+  if (!user) {
+    return [];
+  }
+
+  const items = Array.isArray(user.aiFeedback) ? user.aiFeedback : [];
+  return items.slice(0, limit).map((entry) => ({
+    id: entry.id,
+    roomId: entry.roomId,
+    summary: entry.summary,
+    winnerReason: entry.winnerReason,
+    strengths: entry.strengths,
+    weaknesses: entry.weaknesses,
+    suggestions: entry.suggestions,
+    qualityScore: entry.qualityScore,
+    generatedAt:
+      entry.generatedAt instanceof Date
+        ? entry.generatedAt.toISOString()
+        : new Date(entry.generatedAt).toISOString(),
+  }));
+}
+
+async function listRecruiterCandidates({ tier, language, limit = 30 } = {}) {
+  let pool;
+  if (hasMongo) {
+    const query = { role: "developer" };
+    if (language) {
+      query.primaryLanguages = String(language).toLowerCase();
+    }
+    pool = (
+      await UserModel.find(query).sort({ rating: -1 }).limit(200).lean()
+    ).map((user) => normalizeUser(user));
+  } else {
+    pool = users
+      .filter((user) => user.role !== "recruiter" && user.role !== "admin")
+      .filter((user) => {
+        if (!language) {
+          return true;
+        }
+        const langs = Array.isArray(user.primaryLanguages)
+          ? user.primaryLanguages
+          : [];
+        return langs.includes(String(language).toLowerCase());
+      })
+      .sort((a, b) => b.rating - a.rating);
+  }
+
+  const normalizedTier = tier ? String(tier).trim().toLowerCase() : "";
+
+  const filtered = pool.filter((user) => {
+    if (!normalizedTier) {
+      return true;
+    }
+    return ratingToTier(user.rating).toLowerCase() === normalizedTier;
+  });
+
+  return filtered.slice(0, limit).map((user) => {
+    const wins = Number(user.wins || 0);
+    const losses = Number(user.losses || 0);
+    const matchesPlayed = Number(user.matchesPlayed || 0);
+    const winRate =
+      matchesPlayed > 0 ? Math.round((wins / matchesPlayed) * 100) : 0;
+    const feedback = Array.isArray(user.aiFeedback) ? user.aiFeedback : [];
+    const latestFeedback = feedback[0] || null;
+
+    return {
+      id: user.id,
+      username: user.username,
+      rating: user.rating,
+      tier: ratingToTier(user.rating),
+      wins,
+      losses,
+      matchesPlayed,
+      winRate,
+      primaryLanguages: Array.isArray(user.primaryLanguages)
+        ? user.primaryLanguages
+        : [],
+      aiHighlight: latestFeedback
+        ? {
+            summary: latestFeedback.summary,
+            suggestions: latestFeedback.suggestions,
+            strengths: latestFeedback.strengths,
+            qualityScore: latestFeedback.qualityScore,
+            generatedAt:
+              latestFeedback.generatedAt instanceof Date
+                ? latestFeedback.generatedAt.toISOString()
+                : new Date(latestFeedback.generatedAt).toISOString(),
+          }
+        : null,
+    };
+  });
+}
+
 function isDbReady() {
   if (!hasMongo) {
     return true;
@@ -315,6 +517,10 @@ module.exports = {
   listLeaderboard,
   updateMatchOutcome,
   getUsersByIds,
+  addAiFeedbackForUser,
+  listAiFeedbackByUser,
+  listRecruiterCandidates,
+  ratingToTier,
   isDbReady,
   getRuntimeStats,
   users,

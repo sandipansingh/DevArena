@@ -6,6 +6,7 @@ import Editor from "@monaco-editor/react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import {
   API_BASE_URL,
+  getMyAiFeedback,
   getLeaderboard,
   getMe,
   getTournaments,
@@ -13,6 +14,7 @@ import {
   register,
 } from "./api";
 import type {
+  AiFeedbackItem,
   BattleFinishedPayload,
   BattleReadyPayload,
   LeaderboardUser,
@@ -27,13 +29,18 @@ import {
   phaseToPath,
 } from "./appFlow";
 import type { Difficulty, Phase, SocketErrorPayload } from "./appFlow";
+import Leaderboard from "./components/Leaderboard";
+import RecruiterPortal from "./pages/RecruiterPortal";
 import "./App.css";
 
 type SubmissionMessage = {
   userId: string;
   passed: boolean;
+  verdict?: string;
+  language?: string;
   engine?: string;
   status?: string;
+  stdout?: string;
   stderr?: string;
   runtime?: string | number | null;
   memory?: string | number | null;
@@ -82,6 +89,8 @@ function App() {
 
   const [username, setUsername] = useState<string>("");
   const [password, setPassword] = useState<string>("");
+  const [role, setRole] = useState<"developer" | "recruiter">("developer");
+  const [languages, setLanguages] = useState<string>("javascript");
 
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
   const [queueStatus, setQueueStatus] = useState<string>("idle");
@@ -101,6 +110,9 @@ function App() {
   );
   const [chatInput, setChatInput] = useState<string>("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [aiFeedback, setAiFeedback] = useState<AiFeedbackItem[]>([]);
+  const [submitPending, setSubmitPending] = useState<boolean>(false);
+  const [submitMessage, setSubmitMessage] = useState<string>("");
 
   const currentOpponent = useMemo(() => {
     if (!battle || !user) {
@@ -126,7 +138,7 @@ function App() {
     getMe(token)
       .then((me) => {
         setUser(me);
-        setPhase("dashboard");
+        setPhase(me.role === "recruiter" ? "recruiter" : "dashboard");
       })
       .catch(() => {
         const fallbackState = authBootstrapFailureState();
@@ -138,7 +150,10 @@ function App() {
   }, [token]);
 
   useEffect(() => {
-    if (phase !== "dashboard" && phase !== "result") {
+    if (
+      (phase !== "dashboard" && phase !== "result") ||
+      user?.role === "recruiter"
+    ) {
       return;
     }
 
@@ -148,7 +163,21 @@ function App() {
     getTournaments()
       .then(setTournaments)
       .catch(() => undefined);
-  }, [phase]);
+  }, [phase, user?.role]);
+
+  useEffect(() => {
+    if (!token || !user || user.role === "recruiter") {
+      return;
+    }
+
+    if (phase !== "dashboard" && phase !== "result") {
+      return;
+    }
+
+    getMyAiFeedback(token, 5)
+      .then(setAiFeedback)
+      .catch(() => undefined);
+  }, [phase, token, user]);
 
   useEffect(() => {
     if (!battle) {
@@ -187,6 +216,8 @@ function App() {
     setChatInput("");
     setChatMessages([]);
     setConnectionStatus("");
+    setSubmitPending(false);
+    setSubmitMessage("");
   }
 
   function disconnectSocket() {
@@ -200,19 +231,57 @@ function App() {
     setConnectionStatus("");
   }
 
+  function buildSubmissionMessage(payload: SubmissionMessage): string {
+    const verdict = String(payload.verdict || "").toLowerCase();
+    if (verdict === "accepted") {
+      return "Accepted. Great work.";
+    }
+    if (verdict === "wrong-answer") {
+      return "Wrong answer. Review expected output and retry.";
+    }
+    if (verdict === "compile-error") {
+      return `Compile error: ${payload.stderr || payload.status || "Fix syntax and submit again."}`;
+    }
+    if (verdict === "runtime-error") {
+      return `Runtime error: ${payload.stderr || payload.status || "Check logic and edge cases."}`;
+    }
+    if (verdict === "invalid-language" || verdict === "unsupported-language") {
+      return `Invalid language: ${payload.stderr || payload.status || "Pick a supported language."}`;
+    }
+    if (payload.status) {
+      return payload.status;
+    }
+    return payload.passed ? "Accepted" : "Submission processed";
+  }
+
   function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
 
-    const action = isRegisterMode ? register : login;
-    action(username.trim(), password)
+    const trimmedUsername = username.trim();
+    const authRequest = isRegisterMode
+      ? register(trimmedUsername, password, {
+          role,
+          primaryLanguages: languages
+            .split(",")
+            .map((item) => item.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 8),
+        })
+      : login(trimmedUsername, password);
+
+    authRequest
       .then((response) => {
         localStorage.setItem(TOKEN_KEY, response.token);
         setToken(response.token);
         setUser(response.user);
         setUsername("");
         setPassword("");
-        setPhase("dashboard");
+        setRole("developer");
+        setLanguages("javascript");
+        setPhase(
+          response.user.role === "recruiter" ? "recruiter" : "dashboard",
+        );
       })
       .catch((authError: Error) => {
         setError(authError.message);
@@ -274,6 +343,8 @@ function App() {
         Math.max(0, Math.floor((payload.endsAt - Date.now()) / 1000)),
       );
       setConnectionStatus("Live battle connected");
+      setSubmitPending(false);
+      setSubmitMessage("");
       setPhase("battle");
     });
 
@@ -303,6 +374,7 @@ function App() {
         Math.max(0, Math.floor((payload.endsAt - Date.now()) / 1000)),
       );
       setConnectionStatus("Reconnected to battle and restored state");
+      setSubmitPending(false);
       setPhase("battle");
     });
 
@@ -337,12 +409,25 @@ function App() {
       "battle:submission-result",
       (payload: SubmissionMessage) => {
         setSubmissions((prev) => [...prev, payload]);
+        if (payload.userId === user?.id) {
+          setSubmitPending(false);
+          setSubmitMessage(buildSubmissionMessage(payload));
+        }
+      },
+    );
+
+    socketConnection.on(
+      "battle:room-active",
+      (_payload: { roomId: string; reason?: string; endsAt?: number }) => {
+        setConnectionStatus("Room active. Keep coding.");
       },
     );
 
     socketConnection.on("battle:finished", (payload: BattleFinishedPayload) => {
       setResult(payload);
       setConnectionStatus("");
+      setSubmitPending(false);
+      setSubmitMessage("Battle finalized. Redirecting to results.");
       setPhase("result");
       if (token) {
         getMe(token)
@@ -374,6 +459,14 @@ function App() {
 
     socketConnection.on("battle:error", (payload: SocketErrorPayload) => {
       setError(formatSocketError(payload, "Battle request failed"));
+      if (
+        payload?.code === "INVALID_LANGUAGE" ||
+        payload?.code === "ROOM_NOT_ACTIVE" ||
+        payload?.code === "INVALID_SUBMISSION_PAYLOAD" ||
+        payload?.code === "SUBMIT_RATE_LIMITED"
+      ) {
+        setSubmitPending(false);
+      }
     });
 
     socketConnection.on("battle:chat", (payload: ChatMessage) => {
@@ -386,13 +479,17 @@ function App() {
   function leaveQueue() {
     disconnectSocket();
     setQueueStatus(describeQueueStatus({ status: "idle", difficulty }));
-    setPhase("dashboard");
+    setPhase(user?.role === "recruiter" ? "recruiter" : "dashboard");
   }
 
   function submitCode() {
-    if (!socket || !battle) {
+    if (!socket || !battle || submitPending) {
       return;
     }
+
+    setSubmitPending(true);
+    setSubmitMessage("Submitting...");
+    setError("");
 
     socket.emit("battle:submit", {
       roomId: battle.roomId,
@@ -423,6 +520,7 @@ function App() {
     localStorage.removeItem(TOKEN_KEY);
     setToken("");
     setUser(null);
+    setAiFeedback([]);
     setPhase("auth");
     resetBattleState();
   }
@@ -467,6 +565,30 @@ function App() {
               required
             />
           </label>
+          {isRegisterMode ? (
+            <>
+              <label>
+                Account Type
+                <select
+                  value={role}
+                  onChange={(event) =>
+                    setRole(event.target.value as "developer" | "recruiter")
+                  }
+                >
+                  <option value="developer">Developer</option>
+                  <option value="recruiter">Recruiter</option>
+                </select>
+              </label>
+              <label>
+                Primary Languages (comma separated)
+                <input
+                  value={languages}
+                  onChange={(event) => setLanguages(event.target.value)}
+                  placeholder="javascript, python"
+                />
+              </label>
+            </>
+          ) : null}
           <button type="submit" className="primary-btn">
             {isRegisterMode ? "Register" : "Login"}
           </button>
@@ -492,6 +614,10 @@ function App() {
         <h2>
           {user?.username} • {user?.rating ?? 1200} ELO
         </h2>
+        <p className="hint">
+          {(user?.role || "developer").toUpperCase()}
+          {user?.tier ? ` • ${user.tier}` : ""}
+        </p>
       </div>
       <button type="button" className="ghost-btn" onClick={logout}>
         Logout
@@ -532,14 +658,7 @@ function App() {
 
         <article className="card leaderboard">
           <h3>Leaderboard</h3>
-          <ol>
-            {leaderboard.map((entry) => (
-              <li key={entry.id}>
-                <span>{entry.username}</span>
-                <span>{entry.rating}</span>
-              </li>
-            ))}
-          </ol>
+          <Leaderboard entries={leaderboard} />
         </article>
 
         <article className="card leaderboard">
@@ -578,7 +697,34 @@ function App() {
             )}
           </ol>
         </article>
+
+        <article className="card leaderboard">
+          <h3>Recent AI Coaching</h3>
+          <ol>
+            {aiFeedback.length === 0 ? (
+              <li>
+                <span>No AI coaching yet</span>
+                <span>-</span>
+              </li>
+            ) : (
+              aiFeedback.map((entry) => (
+                <li key={entry.id}>
+                  <span>{entry.summary}</span>
+                  <span>{entry.qualityScore ?? "N/A"}</span>
+                </li>
+              ))
+            )}
+          </ol>
+        </article>
       </section>
+      {error ? <p className="error-text">{error}</p> : null}
+    </main>
+  );
+
+  const recruiterView = (
+    <main className="container app-layout">
+      {shellHeader}
+      <RecruiterPortal token={token} onError={setError} />
       {error ? <p className="error-text">{error}</p> : null}
     </main>
   );
@@ -669,9 +815,15 @@ function App() {
               }}
             />
           </div>
-          <button type="button" className="primary-btn" onClick={submitCode}>
-            Submit Code
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={submitCode}
+            disabled={submitPending}
+          >
+            {submitPending ? "Submitting..." : "Submit Code"}
           </button>
+          {submitMessage ? <p className="hint">{submitMessage}</p> : null}
           <div className="chat-wrap">
             <div className="chat-log">
               {chatMessages.map((item, index) => (
@@ -695,14 +847,29 @@ function App() {
             {submissions.map((item, index) => (
               <p key={`${item.userId}-${index}`}>
                 {item.userId === user?.id ? "You" : "Opponent"} submitted:{" "}
-                {item.passed ? "Accepted" : "Wrong Answer"}
+                {item.verdict === "accepted"
+                  ? "Accepted"
+                  : item.verdict === "wrong-answer"
+                    ? "Wrong Answer"
+                    : item.verdict === "compile-error"
+                      ? "Compile Error"
+                      : item.verdict === "runtime-error"
+                        ? "Runtime Error"
+                        : item.verdict === "invalid-language" ||
+                            item.verdict === "unsupported-language"
+                          ? "Invalid Language"
+                          : item.passed
+                            ? "Accepted"
+                            : "Rejected"}
                 {item.engine ? ` (${item.engine})` : ""}
+                {item.status ? ` • ${item.status}` : ""}
                 {item.runtime !== null && item.runtime !== undefined
                   ? ` • ${item.runtime}s`
                   : ""}
                 {item.memory !== null && item.memory !== undefined
                   ? ` • ${item.memory}KB`
                   : ""}
+                {item.stderr ? ` • ${item.stderr}` : ""}
               </p>
             ))}
           </div>
@@ -767,6 +934,7 @@ function App() {
     <Routes>
       <Route path="/auth" element={authView} />
       <Route path="/dashboard" element={dashboardView} />
+      <Route path="/recruiter" element={recruiterView} />
       <Route path="/queue" element={queueView} />
       <Route path="/battle" element={battleView} />
       <Route path="/result" element={resultView} />

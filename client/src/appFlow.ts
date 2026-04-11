@@ -4,6 +4,7 @@ export type Phase =
   | "loading"
   | "auth"
   | "dashboard"
+  | "recruiter"
   | "queue"
   | "battle"
   | "result";
@@ -18,6 +19,7 @@ export type SocketErrorPayload = {
 export function phaseToPath(phase: Phase): string {
   if (phase === "auth") return "/auth";
   if (phase === "dashboard") return "/dashboard";
+  if (phase === "recruiter") return "/recruiter";
   if (phase === "queue") return "/queue";
   if (phase === "battle") return "/battle";
   if (phase === "result") return "/result";

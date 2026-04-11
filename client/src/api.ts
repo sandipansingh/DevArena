@@ -4,6 +4,9 @@ export const API_BASE_URL =
 export type User = {
   id: string;
   username: string;
+  role: "developer" | "recruiter" | "admin";
+  primaryLanguages?: string[];
+  tier?: "Bronze" | "Silver" | "Gold" | "Platinum";
   rating: number;
   wins: number;
   losses: number;
@@ -26,6 +29,37 @@ export type MatchSummary = {
 export type AuthResponse = {
   token: string;
   user: User;
+};
+
+export type AiFeedbackItem = {
+  id: string;
+  roomId: string;
+  summary: string;
+  winnerReason: string;
+  strengths: string;
+  weaknesses: string;
+  suggestions: string;
+  qualityScore: number | null;
+  generatedAt: string;
+};
+
+export type RecruiterCandidate = {
+  id: string;
+  username: string;
+  rating: number;
+  tier: "Bronze" | "Silver" | "Gold" | "Platinum";
+  wins: number;
+  losses: number;
+  matchesPlayed: number;
+  winRate: number;
+  primaryLanguages: string[];
+  aiHighlight: {
+    summary: string;
+    suggestions: string;
+    strengths: string;
+    qualityScore: number | null;
+    generatedAt: string;
+  } | null;
 };
 
 export type LeaderboardUser = {
@@ -133,10 +167,19 @@ export function login(
 export function register(
   username: string,
   password: string,
+  options?: {
+    role?: "developer" | "recruiter";
+    primaryLanguages?: string[];
+  },
 ): Promise<AuthResponse> {
   return request<AuthResponse>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username,
+      password,
+      role: options?.role,
+      primaryLanguages: options?.primaryLanguages,
+    }),
   });
 }
 
@@ -150,4 +193,40 @@ export function getLeaderboard(): Promise<LeaderboardUser[]> {
 
 export function getTournaments(): Promise<Tournament[]> {
   return request<Tournament[]>("/tournaments", { method: "GET" });
+}
+
+export function getMyAiFeedback(
+  token: string,
+  limit = 20,
+): Promise<AiFeedbackItem[]> {
+  const search = new URLSearchParams({ limit: String(limit) });
+  return request<AiFeedbackItem[]>(
+    `/users/me/ai-feedback?${search.toString()}`,
+    { method: "GET" },
+    token,
+  );
+}
+
+export function getRecruiterCandidates(
+  token: string,
+  filters: {
+    tier?: "Bronze" | "Silver" | "Gold" | "Platinum";
+    language?: string;
+    limit?: number;
+  } = {},
+): Promise<RecruiterCandidate[]> {
+  const search = new URLSearchParams();
+  if (filters.tier) {
+    search.set("tier", filters.tier);
+  }
+  if (filters.language) {
+    search.set("language", filters.language);
+  }
+  search.set("limit", String(filters.limit || 30));
+
+  return request<RecruiterCandidate[]>(
+    `/recruiter/candidates?${search.toString()}`,
+    { method: "GET" },
+    token,
+  );
 }

@@ -5,406 +5,219 @@
 ### 1.1 Document title and version
 
 - PRD: DevArena Real-Time Competitive Coding Platform
-- Version: 1.0
-- Date: April 9, 2026
+- Version: 2.0
 
 ### 1.2 Product summary
 
-DevArena is a full-stack competitive coding platform that enables live 1v1 coding battles. Unlike traditional practice platforms centered on solo submissions, this project introduces real-time competition where two users solve the same problem under a synchronized timer and receive immediate outcomes.
+DevArena is a full-stack competitive coding platform that gamifies technical interview preparation and serves as a talent discovery engine for recruiters. By blending real-time competitive programming with AI-powered coaching and advanced matchmaking, the platform provides a thrilling, high-pressure environment for developers to hone their skills. The platform will support core 1v1 battles, team-based matchups, and a dedicated practice arena.
 
-The initial launch focuses on a reliable and fast core battle loop for interview preparation users: authentication, skill-based matchmaking, battle room experience, secure code execution, rating updates, and leaderboard visibility. This foundation is designed to feel like live technical interview pressure while remaining accessible for repeated practice.
-
-The broader product vision extends beyond V1 into a social and scalable coding arena with spectator mode, live chat moderation, tournaments, and AI-powered problem curation and coaching. The long-term goal is to become the default platform for competitive interview prep and real-time coding performance improvement.
+As developers compete and grow, their profiles act as dynamic, verifiable skill portfolios. Technical recruiters and engineering managers can use the platform's talent discovery dashboard to identify top-performing candidates based on specialized leaderboards, seasonal tournament results, and transparent coding metrics.
 
 ## 2. Goals
 
 ### 2.1 Business goals
 
-- Launch a differentiated coding product with real-time 1v1 battles as the core value proposition.
-- Reach 500 to 1000 daily active users in early post-launch months.
-- Improve retention by creating habit-forming competitive practice loops.
-- Build a portfolio-grade, production-ready platform that can expand into tournaments and community features.
+- Establish a highly engaging, community-driven competitive coding platform with strong daily active usage.
+- Create a robust talent pipeline connecting top-tier developers with technical recruiters.
+- Drive high tournament participation rates through seasonal events and tiered ranking systems.
+- Build a foundation for future monetization through enterprise hiring tools and recruiter subscriptions.
 
 ### 2.2 User goals
 
-- Practice coding under realistic time pressure similar to live interviews.
-- Measure progress through rating changes, win-loss trends, and match history.
-- Find opponents quickly with balanced skill matching.
-- Receive immediate, trustworthy submission feedback with runtime and memory indicators.
+- Practice algorithmic problem-solving under realistic time constraints.
+- Collaborate with peers in team-based (2v2 and 4v4) coding battles.
+- Receive immediate, AI-driven personalized feedback and improvement suggestions on code submissions.
+- Showcase coding proficiency to potential employers via a comprehensive public skill profile.
+- Discover high-quality technical talent seamlessly (for recruiters).
 
 ### 2.3 Non-goals
 
-- Supporting every programming language in V1.
-- Building recruiter workflows or employer interview administration in V1.
-- Implementing full social network features in V1.
-- Delivering advanced anti-cheat and proctoring systems in V1.
+- Immediate monetization (platform will remain free initially to prioritize growth).
+- Fully automated job placement or offer negotiation out of the box.
+- Supporting inherently non-competitive legacy or niche languages in initial rollouts.
 
 ## 3. User personas
 
 ### 3.1 Key user types
 
-- Interview-prep student
-- Early-career developer preparing for coding rounds
-- Competitive programming enthusiast
-- Spectator community member (post-V1)
-- Platform operator and moderator
+- Computer science students
+- Competitive programmers
+- Software engineers (career switchers)
+- Technical recruiters
+- Engineering managers
 
 ### 3.2 Basic persona details
 
-- **Interview-prep student**: Needs frequent, realistic coding pressure practice to improve speed and confidence.
-- **Early-career developer**: Wants measurable growth through rating systems and concise feedback after each match.
-- **Competitive programming enthusiast**: Seeks head-to-head challenge and ranking progression.
-- **Spectator community member**: Watches live battles and follows high-rated players.
-- **Platform operator/moderator**: Oversees platform stability, abuse prevention, and fair play standards.
+- **Computer science student**: Preparing for technical interviews and looking to build a verifiable public portfolio of their problem-solving skills.
+- **Competitive programmer**: Driven by leaderboards, ranking tiers, and the thrill of large-scale free-for-all contests.
+- **Software engineer**: An experienced developer looking to sharpen algorithmic skills before approaching the job market to switch companies.
+- **Technical recruiter**: Searching for proven, unbiased coding talent without relying solely on traditional resumes.
+- **Engineering manager**: Evaluating candidate capabilities based on actionable metrics like coding efficiency, edge-case handling, and peer collaboration.
 
 ### 3.3 Role-based access
 
-- **Guest**: Can view landing content and public leaderboard previews.
-- **Authenticated player**: Can enter matchmaking, join battles, submit solutions, view results, and track stats.
-- **Spectator**: Can watch live battle sessions with limited read-only access (post-V1).
-- **Moderator/Admin**: Can manage abuse reports, moderate chat, and manage tournament operations (post-V1).
+- **Guest**: Can view public profiles, global leaderboards, and read-only aspects of the platform.
+- **Developer**: Can participate in all battle modes (1v1, team, tournaments, practice), utilize AI coaching, and manage their public profile.
+- **Recruiter**: Can access the talent discovery dashboard, search for candidates by tier, and view detailed post-battle analytics.
+- **Moderator/Admin**: Can moderate chats, manage tournament operations, and handle platform integrity.
 
 ## 4. Functional requirements
 
-- **Authentication and account management** (Priority: P0)
-  - Users can register and log in with username and password.
-  - Authentication uses signed JWT access tokens with expiration.
-  - Passwords are hashed before persistence.
-  - Authenticated users can fetch profile details including rating and match stats.
+- **Real-time coding battles & Matchmaking** (Priority: P0)
+  - Synchronized 1v1 and team-based (2v2, 4v4) coding rooms with a real-time collaborative editor.
+  - ELO-style skill-based matchmaking ensuring fair pairing across ranking tiers (Bronze, Silver, Gold, etc.).
+  - Large-scale free-for-all contests and weekly seasonal tournaments.
 
-- **Dashboard and profile summary** (Priority: P0)
-  - Dashboard displays rating, wins, losses, matches played, and recent match summaries.
-  - Dashboard provides a clear primary call-to-action for entering matchmaking.
-  - Dashboard includes leaderboard preview and tournament card placeholders.
+- **AI-powered coaching & Practice arena** (Priority: P0)
+  - Dedicated practice arena featuring adaptive, AI-generated coding challenges against AI opponents.
+  - Post-battle analytics delivering personalized feedback, coding efficiency metrics, and specific improvement suggestions based on submitted code.
 
-- **Skill-based matchmaking** (Priority: P0)
-  - User enters queue with selected difficulty.
-  - Matchmaking pairs users by difficulty and nearest rating with tolerance logic.
-  - Private battle room is created automatically when two players are matched.
-  - Queue join, wait, and leave states are communicated in real time.
+- **Public profiles & Leaderboards** (Priority: P1)
+  - Developer profiles acting as public skill portfolios highlighting rating, tier, past match performance, and AI-validated strengths.
+  - Live global leaderboards dynamically updated as matches conclude.
 
-- **Battle room experience** (Priority: P0)
-  - Both players receive the same problem statement and synchronized timer.
-  - Monaco editor supports JavaScript, Python, and Java.
-  - Opponent presence and activity indicators are shown.
-  - Player can submit code multiple times before timer end.
-
-- **Submission execution and validation** (Priority: P0)
-  - Submission payload includes code and language.
-  - Execution runs via Judge0 when configured.
-  - Platform falls back to internal validation when external execution is unavailable.
-  - Submission result includes pass/fail, status, runtime, and memory data when available.
-
-- **Result resolution and ratings** (Priority: P0)
-  - Winner is determined using validated submissions and timing rules.
-  - Rating updates follow ELO logic and update both participants.
-  - Match result screen shows winner, reason, and updated ratings.
-  - Users can return directly to dashboard for next match.
-
-- **Leaderboard** (Priority: P0)
-  - Global leaderboard ranks players by rating.
-  - Entries show key profile stats for comparison.
-  - Leaderboard is accessible from dashboard context.
-
-- **Realtime reliability and connection handling** (Priority: P1)
-  - Socket connection uses authenticated handshake.
-  - Client reconnect behavior and error states are surfaced gracefully.
-  - Disconnect handling resolves in-progress matches fairly.
-
-- **Spectator mode** (Priority: P1, post-V1)
-  - Users can join active battle sessions as spectators.
-  - Spectator view exposes read-only state, players, and live match progression.
-  - Spectator access enforces permissions and room availability checks.
-
-- **Live chat and moderation** (Priority: P1, post-V1)
-  - Players can exchange short chat messages during battles.
-  - Messages are sanitized and bounded by length constraints.
-  - Moderation controls support abuse prevention and enforcement.
-
-- **Tournament system** (Priority: P1, post-V1)
-  - Platform supports scheduled bracket-style tournaments.
-  - Tournament pages expose status: upcoming, live, completed.
-  - Match progression updates automatically as results finalize.
-
-- **AI problem curation and feedback** (Priority: P2, post-V1)
-  - AI can generate difficulty-aligned battle prompts.
-  - AI can provide comparative match feedback and coaching summary.
-  - System falls back to deterministic problem library when AI is unavailable.
+- **Recruiter talent discovery dashboard** (Priority: P1)
+  - Specialized portal allowing recruiters to search, filter, and discover developers based on performance metrics, ranking tiers, and specific coding language proficiencies.
 
 ## 5. User experience
 
-### 5.1 Entry points and first-time user flow
+### 5.1 Entry points & first-time user flow
 
-- User lands on product page explaining live battle value.
-- User registers or logs in and receives authenticated session.
-- User is taken to dashboard with visible rating baseline and queue CTA.
-- User selects difficulty and joins queue.
+- Users arrive at a landing page detailing the dual value proposition: competitive improvement and career acceleration.
+- Developers onboard by selecting their primary languages and self-assessing their skill level to seed their initial ELO.
+- Recruiters onboard via a dedicated enterprise gateway, verifying their company credentials.
 
 ### 5.2 Core experience
 
-- **Queue entry**: User chooses difficulty and enters matchmaking.
-  - This ensures low-friction initiation of practice sessions.
-- **Match found**: User transitions from queue to battle room with synchronized timer.
-  - This reinforces fairness and urgency for both players.
-- **Problem solving and submission**: User writes code in Monaco and submits iteratively.
-  - This mirrors interview coding loops with direct pressure feedback.
-- **Result and progression**: User sees outcome, rating delta, and can re-queue quickly.
-  - This supports repeat usage and clear progress tracking.
+- **Matchmaking & Battling**: Developers select a mode (1v1, 2v2, etc.) and seamlessly transition into a collaborative IDE environment.
+  - This realistic pressure builds deep resilience for actual technical interviews.
 
-### 5.3 Advanced features and edge cases
+- **AI Feedback Loop**: Following a match, the AI coach instantly breaks down the solution, highlights time/space complexity, and proposes optimal patterns.
+  - This ensures every battle results in a concrete learning opportunity.
 
-- Opponent disconnects mid-battle.
-- No valid submission by either player before timer expiry.
-- External execution provider timeout or outage.
-- Client reconnect during active room.
-- Simultaneous submissions near time boundary.
-- Spectator joins invalid or ended room (post-V1).
+- **Talent Discovery**: Recruiters define a skill profile (e.g., Gold-tier Python developers) and receive a curated list of active candidates.
+  - This removes the friction of sourcing and screening off-platform.
+
+### 5.3 Advanced features & edge cases
+
+- Collaborative conflict resolution in 2v2 and 4v4 shared editor modes.
+- Network disconnection recovery during high-stakes tournament rounds.
+- Preventing rating manipulation (smurfing) through advanced ELO constraints and anomaly detection.
+- Handling AI-generation boundaries to prevent impossible or trivially solvable practice challenges.
 
 ### 5.4 UI/UX highlights
 
-- Minimal, coding-first interface with battle-critical information prioritized.
-- Responsive layout for desktop and mobile practice sessions.
-- Real-time indicators for timer, opponent activity, and submission events.
-- Clear result state with outcome emphasis and rating change clarity.
+- Dark-mode optimized, high-performance editor layout tailored for prolonged focus.
+- Visual ranking tier badges (Bronze, Silver, Gold, Platinum) prominently displayed across leaderboards and profiles.
+- Intuitive, data-rich dashboards for developers detailing long-term progression metrics.
 
 ## 6. Narrative
 
-A learner preparing for interviews logs in, enters the queue, and is matched with a similarly skilled opponent within seconds. Both receive the same problem and race to produce a correct solution while watching the clock and opponent activity. At match end, DevArena provides a definitive result, updates ratings, and encourages immediate replay, turning interview prep into a fast, measurable, and motivating competitive routine.
+A developer preparing for upcoming interviews jumps into DevArena, warming up in the AI practice arena before joining a live 2v2 weekly tournament. The thrill of competitive problem-solving drives them to achieve a "Gold" ranking. Concurrently, a technical recruiter logs into the talent discovery dashboard searching for high-performing, collaborative engineers. They notice the developer's consistently optimal solutions and team-based success rate, reaching out directly with an interview request based on verified, irrefutable coding competence.
 
 ## 7. Success metrics
 
 ### 7.1 User-centric metrics
 
-- Daily active users: 500 to 1000 in initial post-launch period.
-- Average battles per user per session: at least 2.
-- Match completion rate: at least 85%.
-- 7-day retention: at least 30%.
-- 30-day retention: at least 15%.
+- Monthly active users.
+- Number of coding battles per day.
+- Average session duration.
+- Tournament participation rate.
 
 ### 7.2 Business metrics
 
-- New user activation rate (first battle completed within first day): at least 60%.
-- Weekly growth in completed matches: at least 10% during first quarter.
-- Cost per successful battle execution within infrastructure budget targets.
-- Share of users progressing from first match to fifth match within 14 days: at least 35%.
+- Recruiter engagement and search volume.
+- Candidate matches.
+- User retention rate week-over-week.
 
 ### 7.3 Technical metrics
 
-- Average matchmaking queue time: at most 30 seconds.
-- Battle start latency from match found to room ready: under 2 seconds.
-- Code execution response time: under 3 seconds median.
-- Battle disconnection rate: at most 5%.
-- API and socket service availability: at least 99.5%.
+- Matchmaking execution speed (target < 5 seconds).
+- Real-time synchronization latency in team battles (target < 100ms).
+- AI coach response generation time (target < 5 seconds post-battle).
 
 ## 8. Technical considerations
 
 ### 8.1 Integration points
 
-- React frontend with route-driven phase transitions and socket lifecycle management.
-- Node.js Express API for auth, profile, leaderboard, problems, and tournament metadata.
-- Socket.IO for queue, battle, chat, spectator, and result events.
-- Judge0 for secure isolated execution with fallback validator path.
-- Optional AI provider for problem generation and battle coaching.
+- WebSockets for real-time keystroke synchronization, especially critical in 2v2/4v4 modes.
+- LLM API integrations (e.g., OpenAI) for real-time AI coaching, challenge generation, and solution analysis.
+- Remote Code Execution (RCE) environments (e.g., Judge0) scaled to handle concurrent spikes during free-for-all tournaments.
 
-### 8.2 Data storage and privacy
+### 8.2 Data storage & privacy
 
-- User accounts and rating stats persisted in MongoDB when configured, with in-memory fallback for local mode.
-- Queue and active battle room state maintained in memory for low-latency realtime operations.
-- Passwords stored only as strong hashes.
-- JWT-based access control for REST and websocket channels.
-- Environment-secret management required for JWT keys, API keys, and database URIs.
+- Robust relational data modeling for complex structures (tournaments, team states, historical ELO changes).
+- Strict data privacy controls ensuring developer contact details are only shared with recruiters upon mutual consent.
 
-### 8.3 Scalability and performance
+### 8.3 Scalability & performance
 
-- Current queue model is single-runtime in-memory and suitable for early-stage traffic.
-- Post-V1 scaling path includes Redis-backed distributed queue and socket pub/sub.
-- Horizontal backend scaling requires shared state for rooms and matchmaking.
-- Monitoring should include queue latency, socket churn, execution latency, and error rates.
+- Distributed task queues for offloading intensive AI analysis and code execution post-match.
+- Region-based server deployments to minimize latency for competitive fairness.
 
 ### 8.4 Potential challenges
 
-- Maintaining fair match outcomes under network instability and disconnects.
-- Balancing low queue wait time against match quality.
-- Preventing abuse in chat and spectator features at scale.
-- Handling execution provider outages without degrading user trust.
-- Ensuring rating integrity and preventing manipulation.
+- Orchestrating conflict-free real-time collaboration in a shared coding editor for up to 4 concurrent users.
+- Maintaining the accuracy and relevance of AI-generated feedback without producing hallucinated complexities.
+- Sustaining platform engagement post-tournament seasons.
 
-## 9. Milestones and sequencing
+## 9. Milestones & sequencing
 
 ### 9.1 Project estimate
 
-- Medium-Large: 12 to 16 weeks for full target vision; 5 to 7 weeks for V1 core release.
+- Large: 20 to 24 weeks
 
-### 9.2 Team size and composition
+### 9.2 Team size & composition
 
-- 5 to 7 people: 2 full-stack engineers, 1 frontend engineer, 1 backend engineer, 1 QA engineer, 1 product manager, 1 part-time designer.
+- 8 to 10 people: 3 full-stack engineers, 2 backend engineers, 2 frontend engineers, 1 AI integration specialist, 1 product manager, 1 product designer.
 
 ### 9.3 Suggested phases
 
-- **Phase 1: Core battle loop (V1)** (5 to 7 weeks)
-  - Key deliverables: authentication, dashboard, matchmaking, battle room, code execution pipeline, result screen, leaderboard, baseline observability.
+- **Phase 1**: Core 1v1 battles, ELO foundation, and public developer profiles (6 weeks)
+  - Key deliverables: Real-time editor, Judge0 integration, user auth, rating system.
 
-- **Phase 2: Reliability and social layer (V1.5)** (3 to 4 weeks)
-  - Key deliverables: improved reconnect handling, spectator mode baseline, battle chat safeguards, abuse reporting workflow.
+- **Phase 2**: AI integration and Practice Arena (5 weeks)
+  - Key deliverables: AI coaching feedback loop, adaptive challenge generation, post-battle analytics.
 
-- **Phase 3: Competitive ecosystem (V2)** (4 to 5 weeks)
-  - Key deliverables: tournament brackets, scheduled events, richer profile progression, enhanced analytics.
+- **Phase 3**: Team battles and Tournaments (6 weeks)
+  - Key deliverables: 2v2/4v4 synchronization, tournament bracket system, seasonal tiers.
 
-- **Phase 4: Intelligence and personalization (V2.5)** (2 to 3 weeks)
-  - Key deliverables: AI problem curation, AI comparative feedback quality improvements, recommendation feedback loops.
+- **Phase 4**: Recruiter dashboard and Talent Discovery (5 weeks)
+  - Key deliverables: Recruiter portal, advanced filtering, analytics dashboard, connection requests.
 
 ## 10. User stories
 
-### 10.1 Register a new account
+### 10.1 Access AI-powered coaching
 
 - **ID**: GH-001
-- **Description**: As a new user, I want to create an account so I can start competitive battles and track my progress.
+- **Description**: As a developer, I want to receive personalized AI feedback on my code after a match so that I can learn optimal patterns.
 - **Acceptance criteria**:
-  - Given valid username and password, when I submit registration, then my account is created and I receive an authenticated session.
-  - Given an existing username, when I submit registration, then I see a clear conflict error.
-  - Given invalid input format, when I submit, then I see validation errors and account is not created.
+  - The AI coach generates a time/space complexity breakdown for the final submission.
+  - Specific actionable suggestions for improvement are provided.
+  - Feedback is stored and accessible in the developer's match history.
 
-### 10.2 Log in securely
+### 10.2 Participate in team battles
 
 - **ID**: GH-002
-- **Description**: As a returning user, I want to log in securely so I can access my profile and battle features.
+- **Description**: As a user, I want to join 2v2 or 4v4 team battles so I can collaborate with peers to solve complex problems.
 - **Acceptance criteria**:
-  - Given correct credentials, when I log in, then I receive a valid token and user profile payload.
-  - Given wrong credentials, when I log in, then access is denied with a clear message.
-  - Given expired or invalid token, when I access protected resources, then I am rejected and prompted to re-authenticate.
+  - Multiple users can type in the same editor workspace simultaneously.
+  - A shared team timer and communication channel are available.
+  - ELO rating adjustments account for team match outcomes.
 
-### 10.3 View dashboard and personal stats
+### 10.3 Discover talent as a recruiter
 
 - **ID**: GH-003
-- **Description**: As an authenticated player, I want a dashboard with my key metrics so I can quickly decide my next practice action.
+- **Description**: As a technical recruiter, I want to search a dashboard of developers by ranking tier and language so I can find top candidates.
 - **Acceptance criteria**:
-  - Dashboard displays rating, wins, losses, and matches played.
-  - Dashboard displays recent match history summary once data exists.
-  - Dashboard includes a prominent find match action.
+  - The recruiter dashboard displays candidates segmented by Bronze, Silver, Gold, etc.
+  - Recruiters can view a candidate's verified match statistics and AI feedback highlights.
+  - Recruiters can initiate contact or flag candidates for review.
 
-### 10.4 Enter and leave matchmaking queue
+### 10.4 Compete in weekly tournaments
 
 - **ID**: GH-004
-- **Description**: As a player, I want to enter or exit queue by difficulty so I can control when and how I match.
+- **Description**: As a competitive programmer, I want to join large-scale free-for-all contests so I can earn seasonal ranking tiers.
 - **Acceptance criteria**:
-  - User can select difficulty and join queue.
-  - Queue status updates are shown in real time.
-  - User can leave queue and return to dashboard without stale queue state.
-
-### 10.5 Get fair skill-based matchmaking
-
-- **ID**: GH-005
-- **Description**: As a player, I want opponents near my skill level so battles feel competitive and fair.
-- **Acceptance criteria**:
-  - Matchmaking considers rating and selected difficulty.
-  - Match is created automatically when two eligible users are found.
-  - Queue matching logic prevents self-matching.
-
-### 10.6 Start a synchronized battle room
-
-- **ID**: GH-006
-- **Description**: As a matched player, I want both players to receive the same problem and timer so the contest is fair.
-- **Acceptance criteria**:
-  - Both players receive identical problem payload and time boundary.
-  - Timer is synchronized to server timestamps.
-  - Battle room shows opponent identity and connection status.
-
-### 10.7 Solve in editor and submit multiple attempts
-
-- **ID**: GH-007
-- **Description**: As a player, I want a robust coding editor and repeat submission flow so I can iterate toward a correct solution.
-- **Acceptance criteria**:
-  - Monaco editor supports JavaScript, Python, and Java.
-  - User can submit code multiple times before battle end.
-  - Submission actions are disabled or ignored safely when no active battle exists.
-
-### 10.8 Receive execution and validation feedback
-
-- **ID**: GH-008
-- **Description**: As a player, I want clear execution outcomes so I know whether my submission is accepted.
-- **Acceptance criteria**:
-  - System returns pass/fail and execution status for each submission.
-  - Runtime and memory are displayed when returned by execution engine.
-  - If external judge fails, fallback validation preserves battle continuity.
-
-### 10.9 See opponent activity signals
-
-- **ID**: GH-009
-- **Description**: As a player, I want basic opponent activity indicators so the battle feels truly live.
-- **Acceptance criteria**:
-  - Opponent typing or progress indicator updates during active battle.
-  - Indicators stop when battle ends.
-  - Indicator transport does not reveal opponent source code.
-
-### 10.10 Resolve match and update ratings
-
-- **ID**: GH-010
-- **Description**: As a player, I want accurate winner determination and rating updates so outcomes are trusted.
-- **Acceptance criteria**:
-  - Match finalization identifies winner according to submission and timing rules.
-  - Both players receive result event with reason and updated ratings.
-  - Ratings are updated using ELO formula and persisted.
-
-### 10.11 View leaderboard standings
-
-- **ID**: GH-011
-- **Description**: As a player, I want a global leaderboard so I can benchmark performance.
-- **Acceptance criteria**:
-  - Leaderboard endpoint returns sorted users by rating.
-  - UI displays ranking data with rating and basic records.
-  - Leaderboard remains accessible without entering battle flow.
-
-### 10.12 Handle disconnect and recovery scenarios
-
-- **ID**: GH-012
-- **Description**: As a player, I want fair handling of disconnects so network issues do not produce ambiguous outcomes.
-- **Acceptance criteria**:
-  - If opponent disconnects during battle, system finalizes outcome consistently.
-  - Queue entries are cleared when a user disconnects.
-  - Reconnect or reconnect failure surfaces clear state to user.
-
-### 10.13 Secure access and abuse prevention
-
-- **ID**: GH-013
-- **Description**: As a platform operator, I want strong authentication, authorization, and request protections so user data and gameplay remain secure.
-- **Acceptance criteria**:
-  - Protected APIs require valid bearer token.
-  - Socket connections require valid auth token at handshake.
-  - Passwords are hashed before storage.
-  - Rate limiting and payload validation are enforced on critical endpoints.
-
-### 10.14 Watch live battles as a spectator (post-V1)
-
-- **ID**: GH-014
-- **Description**: As a community user, I want to spectate live battles so I can learn from active matches.
-- **Acceptance criteria**:
-  - Spectator can join an active room with valid access.
-  - Spectator receives read-only battle state and updates.
-  - Joining an invalid room returns a safe error state.
-
-### 10.15 Use battle chat with moderation controls (post-V1)
-
-- **ID**: GH-015
-- **Description**: As a player, I want lightweight in-match chat so I can communicate during battles while preserving safety.
-- **Acceptance criteria**:
-  - Chat messages are length-limited and sanitized.
-  - Chat is available only to authorized room participants.
-  - Moderation workflow can remove or flag abusive content.
-
-### 10.16 Join scheduled tournaments (post-V1)
-
-- **ID**: GH-016
-- **Description**: As a competitive player, I want to participate in tournaments so I can compete in structured events.
-- **Acceptance criteria**:
-  - Tournament list includes upcoming, live, and completed states.
-  - Bracket progression updates as matches complete.
-  - Tournament results contribute to profile history.
-
-### 10.17 Receive AI-generated problem and coaching (post-V1)
-
-- **ID**: GH-017
-- **Description**: As a player, I want tailored AI problem generation and post-match feedback so I can improve faster.
-- **Acceptance criteria**:
-  - System can generate difficulty-appropriate problems using AI when enabled.
-  - Match result can include AI summary and per-player coaching.
-  - If AI services are unavailable, platform falls back to deterministic defaults without blocking gameplay.
+  - Users can register for scheduled weekly tournaments.
+  - Live global leaderboards update in real-time during the event.
+  - Winners are awarded visual tier badges upon tournament completion.

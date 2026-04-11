@@ -1,6 +1,7 @@
 const axios = require("axios");
 
-const AI_ENABLED = String(process.env.AI_ENABLED || "false").toLowerCase() === "true";
+const AI_ENABLED =
+  String(process.env.AI_ENABLED || "false").toLowerCase() === "true";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
@@ -46,10 +47,20 @@ async function generateProblemForMatch({ difficulty, players }) {
     "You are a competitive programming problem generator. Return strict JSON with keys: title, description, constraints (array), sampleInput, sampleOutput, difficulty.";
   const user = `Create one ${difficulty} level coding problem for a 1v1 contest. Players: ${players
     .map((p) => `${p.username}(${p.rating || 1200})`)
-    .join(", ")}. Keep it solvable in <=25 minutes. Return concise but complete statement.`;
+    .join(
+      ", ",
+    )}. Keep it solvable in <=25 minutes. Return concise but complete statement.`;
 
   const data = await callOpenAI(system, user);
   if (!data?.title || !data?.description) {
+    return null;
+  }
+
+  const normalizedSampleInput = String(data.sampleInput || "").trim();
+  const normalizedSampleOutput = String(data.sampleOutput || "").trim();
+
+  // AI problems must expose executable validation metadata.
+  if (!normalizedSampleInput || !normalizedSampleOutput) {
     return null;
   }
 
@@ -58,16 +69,30 @@ async function generateProblemForMatch({ difficulty, players }) {
     title: String(data.title).slice(0, 120),
     difficulty,
     description: String(data.description),
-    constraints: Array.isArray(data.constraints) ? data.constraints.map(String).slice(0, 8) : [],
-    sampleInput: String(data.sampleInput || ""),
-    sampleOutput: String(data.sampleOutput || ""),
-    // AI-generated problems fall back to status-based validation when Judge0 is absent.
-    validator: (code) => String(code || "").trim().length > 40,
+    constraints: Array.isArray(data.constraints)
+      ? data.constraints.map(String).slice(0, 8)
+      : [],
+    sampleInput: normalizedSampleInput,
+    sampleOutput: normalizedSampleOutput,
+    validation: {
+      comparator: "trimmed-exact",
+      testCases: [
+        {
+          input: normalizedSampleInput,
+          expectedOutput: normalizedSampleOutput,
+        },
+      ],
+    },
     source: "ai",
   };
 }
 
-async function judgeBattleAndCoach({ problem, players, submissions, winnerId }) {
+async function judgeBattleAndCoach({
+  problem,
+  players,
+  submissions,
+  winnerId,
+}) {
   const system =
     "You are an impartial coding contest judge and coach. Return strict JSON with keys: summary, winnerReason, perPlayer (array of {userId, strengths, weaknesses, suggestions}), qualityScores (object keyed by userId with 0-100).";
 
@@ -93,8 +118,13 @@ async function judgeBattleAndCoach({ problem, players, submissions, winnerId }) 
 
   return {
     summary: String(data.summary || "No AI summary available."),
-    winnerReason: String(data.winnerReason || "Winner chosen by execution outcome."),
-    qualityScores: typeof data.qualityScores === "object" && data.qualityScores ? data.qualityScores : {},
+    winnerReason: String(
+      data.winnerReason || "Winner chosen by execution outcome.",
+    ),
+    qualityScores:
+      typeof data.qualityScores === "object" && data.qualityScores
+        ? data.qualityScores
+        : {},
     perPlayer: Array.isArray(data.perPlayer)
       ? data.perPlayer.map((entry) => ({
           userId: String(entry.userId || ""),

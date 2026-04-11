@@ -47,6 +47,7 @@ Key variables:
 - CHAT_RATE_LIMIT_MAX
 - SUBMIT_RATE_LIMIT_WINDOW_MS
 - SUBMIT_RATE_LIMIT_MAX
+- FAIRNESS_POLICY (`timer-only` or `early-finish`)
 - JUDGE0_URL (optional)
 - JUDGE0_KEY (optional)
 
@@ -112,9 +113,14 @@ Important: update JWT_SECRET in docker-compose.prod.yml before real deployment.
 
 ## Match Fairness Policy
 
-- Winner is finalized at timer expiry using the earliest accepted submission.
-- If no player has an accepted submission when the timer expires, the match is a draw (`timer-expired-no-solution-draw`).
-- Draws do not alter ELO ratings.
+- `FAIRNESS_POLICY=timer-only` (default): accepted submissions are evaluated continuously but final winner resolution waits for timer expiry.
+- `FAIRNESS_POLICY=early-finish`: first accepted submission finalizes immediately with reason `early-accepted`.
+- Regardless of fairness policy, rooms always finalize deterministically on these end conditions:
+  - accepted winner found (policy-dependent timing)
+  - both players submitted with no accepted result (`all-submitted-no-solution`)
+  - timer expiry (`timer-expired`)
+  - disconnect forfeit after grace (`disconnect-timeout`)
+- Draw outcomes do not alter ELO ratings.
 
 ## Operational Runbook
 
@@ -138,6 +144,15 @@ Disconnect and socket instability response:
 1. Check `/health/ready` runtime queue and active room counts.
 2. Verify `DISCONNECT_GRACE_MS` and socket reconnect behavior in logs.
 3. If instability persists, scale down active matchmaking and re-enable gradually.
+
+Battle lifecycle monitoring:
+
+1. Check `/health/ready` runtime operational stats:
+   - `runtime.operational.finalizedRooms`
+   - `runtime.operational.averageCompletionMs`
+   - `runtime.operational.stuckRooms`
+   - `runtime.operational.finalizeReasons`
+2. Investigate rooms marked as stuck and review structured submit/finalize logs.
 
 ## Prelaunch Load Check
 

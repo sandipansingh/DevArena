@@ -42,6 +42,7 @@ describe("DevArena API", () => {
 
     expect(loginRes.status).toBe(200);
     expect(loginRes.body.user.username).toBe(username);
+    expect(loginRes.body.user.role).toBe("developer");
 
     const meRes = await request(runtime.app)
       .get("/users/me")
@@ -49,7 +50,15 @@ describe("DevArena API", () => {
 
     expect(meRes.status).toBe(200);
     expect(meRes.body.username).toBe(username);
+    expect(meRes.body.role).toBe("developer");
     expect(Array.isArray(meRes.body.recentMatches)).toBe(true);
+
+    const feedbackRes = await request(runtime.app)
+      .get("/users/me/ai-feedback")
+      .set("Authorization", `Bearer ${loginRes.body.token}`);
+
+    expect(feedbackRes.status).toBe(200);
+    expect(Array.isArray(feedbackRes.body)).toBe(true);
   });
 
   test("leaderboard and problems endpoints", async () => {
@@ -68,5 +77,44 @@ describe("DevArena API", () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body[0]).toHaveProperty("id");
+  });
+
+  test("recruiter candidates endpoint enforces role access", async () => {
+    const recruiterName = `recruiter_${Date.now()}`;
+    const devName = `dev_${Date.now()}`;
+
+    const recruiterRes = await request(runtime.app)
+      .post("/auth/register")
+      .send({
+        username: recruiterName,
+        password: "password123",
+        role: "recruiter",
+      });
+
+    const devRes = await request(runtime.app)
+      .post("/auth/register")
+      .send({
+        username: devName,
+        password: "password123",
+        primaryLanguages: ["javascript", "python"],
+      });
+
+    expect(recruiterRes.status).toBe(201);
+    expect(recruiterRes.body.user.role).toBe("recruiter");
+    expect(devRes.status).toBe(201);
+
+    const forbidden = await request(runtime.app)
+      .get("/recruiter/candidates")
+      .set("Authorization", `Bearer ${devRes.body.token}`);
+    expect(forbidden.status).toBe(403);
+
+    const allowed = await request(runtime.app)
+      .get("/recruiter/candidates?language=javascript&limit=10")
+      .set("Authorization", `Bearer ${recruiterRes.body.token}`);
+    expect(allowed.status).toBe(200);
+    expect(Array.isArray(allowed.body)).toBe(true);
+    expect(
+      allowed.body.every((candidate) => candidate.username !== recruiterName),
+    ).toBe(true);
   });
 });

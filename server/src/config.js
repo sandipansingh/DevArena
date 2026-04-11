@@ -22,6 +22,7 @@ const envSchema = z.object({
     .positive()
     .default(8_000),
   SUBMIT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
+  FAIRNESS_POLICY: z.enum(["timer-only", "early-finish"]).default("timer-only"),
 });
 
 const parsed = envSchema.safeParse(process.env);

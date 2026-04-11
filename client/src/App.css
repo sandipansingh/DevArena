@@ -144,6 +144,68 @@ button {
   justify-content: space-between;
 }
 
+.leaderboard-list {
+  list-style: decimal;
+  padding-left: 1.2rem;
+  margin: 0.7rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.leaderboard-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.leader-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leader-rating {
+  font-weight: 700;
+}
+
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.16rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.tier-bronze {
+  background: #f6e2cc;
+  color: #6a4220;
+  border-color: #d6ad86;
+}
+
+.tier-silver {
+  background: #edf2f8;
+  color: #31465a;
+  border-color: #b9c6d4;
+}
+
+.tier-gold {
+  background: #fff2cb;
+  color: #65500f;
+  border-color: #d9bf62;
+}
+
+.tier-platinum {
+  background: #d9f8f2;
+  color: #1b5e52;
+  border-color: #7bcdbd;
+}
+
 .queue-card,
 .result-card {
   max-width: 36rem;
@@ -219,10 +281,61 @@ button {
   margin-top: 0.8rem;
 }
 
+.recruiter-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.recruiter-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.recruiter-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.candidate-item {
+  border: 1px solid #d8d2c6;
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+}
+
+.candidate-item header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.candidate-feedback {
+  border-top: 1px dashed #d8d2c6;
+  padding-top: 0.4rem;
+}
+
 @media (max-width: 980px) {
   .auth-layout,
   .dashboard-grid,
   .battle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .candidate-grid,
+  .recruiter-filters {
     grid-template-columns: 1fr;
   }
 
